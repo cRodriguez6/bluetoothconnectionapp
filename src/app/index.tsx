@@ -27,6 +27,8 @@ export default function HomeScreen() {
     isScanning,
     startScan,
     rescan,
+    pairWebBLE,
+    pairWebHID,
     statusMessage,
     isWebSupported,
   } = useBluetoothContext();
@@ -121,16 +123,27 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Web: Pair Device Action Button */}
+          {/* Web: Pair Device Action Buttons */}
           {Platform.OS === 'web' && (
-            <TouchableOpacity
-              style={styles.webPairBtn}
-              onPress={startScan}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="bluetooth" size={18} color="#FFFFFF" />
-              <Text style={styles.webPairBtnText}>+ Pair New Device (Chrome BLE)</Text>
-            </TouchableOpacity>
+            <View style={styles.webButtonsRow}>
+              <TouchableOpacity
+                style={styles.webMouseBtn}
+                onPress={pairWebHID}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="hardware-chip" size={16} color="#FFFFFF" />
+                <Text style={styles.webBtnText}>Pair Mouse (Logitech)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.webBleBtn}
+                onPress={pairWebBLE}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="headset" size={16} color="#FFFFFF" />
+                <Text style={styles.webBtnText}>Pair Bluetooth (Soundcore)</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           {/* Action Controls: List Devices & Rescan */}
@@ -357,15 +370,20 @@ const styles = StyleSheet.create({
   clearBtn: {
     padding: 2,
   },
-  webPairBtn: {
-    backgroundColor: '#0284C7',
+  webButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  webMouseBtn: {
+    flex: 1,
+    backgroundColor: '#0F172A',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
+    gap: 6,
+    paddingVertical: 11,
     borderRadius: 12,
-    marginTop: 10,
     borderWidth: 2,
     borderColor: '#000000',
     shadowColor: '#000000',
@@ -373,10 +391,29 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 2,
-  },
-  webPairBtnText: {
+    cursor: 'pointer',
+  } as any,
+  webBleBtn: {
+    flex: 1,
+    backgroundColor: '#0284C7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#000000',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+    cursor: 'pointer',
+  } as any,
+  webBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '800',
   },
   controlsBar: {

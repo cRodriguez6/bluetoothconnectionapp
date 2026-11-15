@@ -19,42 +19,6 @@ export function inferDeviceType(name?: string | null): DeviceType {
 
 const MAX_DEVICES = 200;
 
-const WEB_SAMPLE_DEVICES: BluetoothDevice[] = [
-  {
-    id: 'web-sample-soundcore',
-    name: 'Soundcore Space One',
-    rssi: -48,
-    isConnected: false,
-    isConnecting: false,
-    deviceType: 'headphones',
-    batteryLevel: 92,
-    serviceUUIDs: ['180A', '180F', 'FE2C'],
-    lastSeen: Date.now(),
-  },
-  {
-    id: 'web-sample-logi',
-    name: 'Logitech MX Master 3S',
-    rssi: -55,
-    isConnected: false,
-    isConnecting: false,
-    deviceType: 'mouse',
-    batteryLevel: 75,
-    serviceUUIDs: ['1812', '180F'],
-    lastSeen: Date.now(),
-  },
-  {
-    id: 'web-sample-airpods',
-    name: 'AirPods Pro (2nd gen)',
-    rssi: -42,
-    isConnected: false,
-    isConnecting: false,
-    deviceType: 'earbuds',
-    batteryLevel: 88,
-    serviceUUIDs: ['180A', '180F'],
-    lastSeen: Date.now(),
-  },
-];
-
 interface BluetoothContextType {
   devices: BluetoothDevice[];
   selectedDevice: BluetoothDevice | null;
@@ -68,41 +32,66 @@ interface BluetoothContextType {
   rescan: () => void;
   connectToDevice: (deviceId: string) => Promise<void>;
   disconnectDevice: (deviceId: string) => Promise<void>;
+  pairWebBLE: () => Promise<void>;
+  pairWebHID: () => Promise<void>;
   isWebSupported: boolean;
+  isWebHIDSupported: boolean;
 }
 
 const BluetoothContext = createContext<BluetoothContextType | undefined>(undefined);
 
 export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [devices, setDevices] = useState<BluetoothDevice[]>(
-    Platform.OS === 'web' ? WEB_SAMPLE_DEVICES : []
-  );
+  const [devices, setDevices] = useState<BluetoothDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('Ready');
   const [showUnnamed, setShowUnnamed] = useState<boolean>(true);
   const [bleManager, setBleManager] = useState<any>(null);
   const [isWebSupported, setIsWebSupported] = useState<boolean>(true);
+  const [isWebHIDSupported, setIsWebHIDSupported] = useState<boolean>(true);
 
   const showUnnamedRef = useRef<boolean>(true);
   const isConnectingRef = useRef<Set<string>>(new Set());
   const managerRef = useRef<any>(null);
   const isScanningRef = useRef<boolean>(false);
-  const webDevicesMap = useRef<Map<string, any>>(new Map());
+
+  // References to keep active Web Bluetooth & WebHID device handles
+  const webBLEMap = useRef<Map<string, any>>(new Map());
+  const webHIDMap = useRef<Map<string, any>>(new Map());
 
   useEffect(() => {
     showUnnamedRef.current = showUnnamed;
   }, [showUnnamed]);
 
-  // Check if Web Bluetooth is supported in current browser
+  // Check browser capabilities on Web
   useEffect(() => {
     if (Platform.OS === 'web') {
-      const supported = typeof navigator !== 'undefined' && Boolean((navigator as any).bluetooth);
-      setIsWebSupported(supported);
-      if (!supported) {
-        setStatusMessage('Notice: Open in Google Chrome or Edge to enable live Web Bluetooth.');
+      const hasBLE = typeof navigator !== 'undefined' && Boolean((navigator as any).bluetooth);
+      const hasHID = typeof navigator !== 'undefined' && Boolean((navigator as any).hid);
+      setIsWebSupported(hasBLE);
+      setIsWebHIDSupported(hasHID);
+
+      if (!hasBLE && !hasHID) {
+        setStatusMessage('Open in Google Chrome or Microsoft Edge for live Bluetooth & Mouse access.');
       } else {
-        setStatusMessage('Web Bluetooth active. Click "+ Pair Real Device" to search in Chrome.');
+        setStatusMessage('Ready. Tap "Pair Mouse" for Logitech or "Pair Bluetooth" for Soundcore.');
+      }
+
+      // Listen for HID device disconnects
+      if (hasHID) {
+        (navigator as any).hid.addEventListener('disconnect', (event: any) => {
+          const disconnectedDev = event.device;
+          setDevices((prev) =>
+            prev.map((d) => {
+              const hidHandle = webHIDMap.current.get(d.id);
+              if (hidHandle === disconnectedDev) {
+                return { ...d, isConnected: false, isConnecting: false };
+              }
+              return d;
+            })
+          );
+          setStatusMessage(`Disconnected from ${disconnectedDev.productName || 'HID Device'}`);
+        });
       }
     }
   }, []);
@@ -123,16 +112,90 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
     return true;
   };
 
-  // Web Bluetooth Pairing
-  const scanWebBluetooth = async () => {
-    if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
-      alert('Web Bluetooth is supported in Google Chrome, Microsoft Edge, and Opera on desktop/Android. Please open this link in Chrome.');
+  // 1. WebHID Pairing (Mice, Keyboards, Controllers - Not blocked by Chrome GATT blocklist!)
+  const pairWebHID = async () => {
+    if (typeof navigator === 'undefined' || !(navigator as any).hid) {
+      alert('WebHID is supported in Google Chrome, Microsoft Edge, and Opera on desktop. Please open this link in Chrome.');
       return;
     }
 
     try {
       setIsScanning(true);
-      setStatusMessage('Chrome pairing dialog opened. Select your device...');
+      setStatusMessage('Chrome HID dialog opened. Select your mouse or keyboard...');
+
+      const selectedList = await (navigator as any).hid.requestDevice({
+        filters: [], // Shows all HID devices (Logitech mice, trackpads, keyboards)
+      });
+
+      if (!selectedList || selectedList.length === 0) {
+        setStatusMessage('No device selected in Chrome picker.');
+        return;
+      }
+
+      const hidDevice = selectedList[0];
+      const deviceId = `hid-${hidDevice.vendorId}-${hidDevice.productId}`;
+      const deviceName = hidDevice.productName || 'Logitech HID Device';
+
+      webHIDMap.current.set(deviceId, hidDevice);
+
+      // Automatically open / connect
+      let isConnected = hidDevice.opened;
+      try {
+        if (!hidDevice.opened) {
+          await hidDevice.open();
+          isConnected = true;
+        }
+      } catch (openErr: any) {
+        console.log('HID open status:', openErr);
+      }
+
+      const newDev: BluetoothDevice = {
+        id: deviceId,
+        name: deviceName,
+        isConnected,
+        isConnecting: false,
+        deviceType: inferDeviceType(deviceName),
+        rssi: -45,
+        lastSeen: Date.now(),
+        serviceUUIDs: ['HID (Mouse/Input)'],
+      };
+
+      setDevices((prev) => {
+        const index = prev.findIndex((d) => d.id === deviceId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = { ...updated[index], ...newDev };
+          return updated;
+        }
+        return [newDev, ...prev];
+      });
+
+      setStatusMessage(
+        isConnected
+          ? `Connected to ${deviceName} via WebHID!`
+          : `Paired ${deviceName}! Tap to connect.`
+      );
+    } catch (err: any) {
+      if (err.name === 'NotFoundError') {
+        setStatusMessage('Device selection cancelled.');
+      } else {
+        setStatusMessage(`HID Error: ${err.message || err}`);
+      }
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // 2. Web Bluetooth Pairing (Headphones like Soundcore, Earbuds, Heart rate, Sensors)
+  const pairWebBLE = async () => {
+    if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
+      alert('Web Bluetooth is supported in Google Chrome, Microsoft Edge, and Opera. Please open this link in Chrome.');
+      return;
+    }
+
+    try {
+      setIsScanning(true);
+      setStatusMessage('Chrome Bluetooth dialog opened. Select your device...');
 
       const webDevice = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
@@ -147,27 +210,25 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
           0x1800,
           0x1801,
           0x180d,
-          0x1812, // HID (mouse/keyboard)
         ],
       });
 
-      webDevicesMap.current.set(webDevice.id, webDevice);
+      webBLEMap.current.set(webDevice.id, webDevice);
 
       const devType = inferDeviceType(webDevice.name);
       const isConnected = webDevice.gatt?.connected ?? false;
 
       const newDev: BluetoothDevice = {
         id: webDevice.id,
-        name: webDevice.name || 'Web Bluetooth Device',
+        name: webDevice.name || 'Bluetooth Device',
         isConnected,
         isConnecting: false,
         deviceType: devType,
-        rssi: -52,
+        rssi: -50,
         lastSeen: Date.now(),
         serviceUUIDs: ['180A', '180F'],
       };
 
-      // Disconnect listener
       webDevice.addEventListener('gattserverdisconnected', () => {
         setDevices((prev) =>
           prev.map((d) => (d.id === webDevice.id ? { ...d, isConnected: false, isConnecting: false } : d))
@@ -190,7 +251,7 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
       if (err.name === 'NotFoundError') {
         setStatusMessage('Pairing prompt closed.');
       } else {
-        setStatusMessage(`Web BLE: ${err.message || err}`);
+        setStatusMessage(`BLE Error: ${err.message || err}`);
       }
     } finally {
       setIsScanning(false);
@@ -200,7 +261,7 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
   // Start BLE Scanning (Native or Web)
   const startScan = async () => {
     if (Platform.OS === 'web') {
-      scanWebBluetooth();
+      await pairWebBLE();
       return;
     }
 
@@ -317,8 +378,9 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
   };
 
   const rescan = () => {
+    setDevices([]);
     if (Platform.OS === 'web') {
-      scanWebBluetooth();
+      setStatusMessage('Device list cleared. Click "Pair Mouse" or "Pair Bluetooth".');
       return;
     }
 
@@ -330,14 +392,13 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
     setIsScanning(false);
     isScanningRef.current = false;
-    setDevices([]);
     setStatusMessage('Rescanning from 0 to 200 devices...');
     setTimeout(() => {
       startScan();
     }, 200);
   };
 
-  // Connect to a device
+  // Connect to a device (Native, WebHID, or Web Bluetooth)
   const connectToDevice = async (deviceId: string) => {
     if (isConnectingRef.current.has(deviceId)) return;
     isConnectingRef.current.add(deviceId);
@@ -347,12 +408,39 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
     );
     setStatusMessage(`Connecting to device...`);
 
-    // Web Bluetooth connection handler
+    // Web handling
     if (Platform.OS === 'web') {
-      const webDev = webDevicesMap.current.get(deviceId);
-      if (webDev && webDev.gatt) {
+      // 1. Check if it is a WebHID device (Mouse, Keyboard)
+      const hidDev = webHIDMap.current.get(deviceId);
+      if (hidDev) {
         try {
-          const server = await webDev.gatt.connect();
+          if (!hidDev.opened) {
+            await hidDev.open();
+          }
+          setDevices((prev) =>
+            prev.map((d) =>
+              d.id === deviceId ? { ...d, isConnected: true, isConnecting: false } : d
+            )
+          );
+          setStatusMessage(`Connected to ${hidDev.productName || 'HID Device'}!`);
+        } catch (hidErr: any) {
+          console.warn('HID connect error:', hidErr);
+          setStatusMessage(`HID Connect error: ${hidErr.message || hidErr}`);
+          setDevices((prev) =>
+            prev.map((d) => (d.id === deviceId ? { ...d, isConnecting: false } : d))
+          );
+        } finally {
+          isConnectingRef.current.delete(deviceId);
+        }
+        return;
+      }
+
+      // 2. Check if it is a Web Bluetooth device (Soundcore, BLE)
+      const bleDev = webBLEMap.current.get(deviceId);
+      if (bleDev && bleDev.gatt) {
+        try {
+          const server = await bleDev.gatt.connect();
+
           let serviceUUIDs: string[] = [];
           try {
             const services = await server.getPrimaryServices();
@@ -371,10 +459,10 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
                 : d
             )
           );
-          setStatusMessage(`Connected to ${webDev.name || 'device'} over Web Bluetooth!`);
-        } catch (err: any) {
-          console.warn('Web GATT error:', err);
-          setStatusMessage(`Connection failed: ${err.message || err}`);
+          setStatusMessage(`Connected to ${bleDev.name || 'Device'}!`);
+        } catch (bleErr: any) {
+          console.warn('Web GATT error:', bleErr);
+          setStatusMessage(`GATT Connect error: ${bleErr.message || bleErr}`);
           setDevices((prev) =>
             prev.map((d) => (d.id === deviceId ? { ...d, isConnecting: false } : d))
           );
@@ -382,24 +470,22 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
           isConnectingRef.current.delete(deviceId);
         }
         return;
-      } else {
-        // Sample device on web
-        setTimeout(() => {
-          setDevices((prev) =>
-            prev.map((d) =>
-              d.id === deviceId
-                ? { ...d, isConnected: true, isConnecting: false, serviceUUIDs: ['180A', '180F', '110B'] }
-                : d
-            )
-          );
-          setStatusMessage(`Connected to device!`);
-          isConnectingRef.current.delete(deviceId);
-        }, 600);
-        return;
       }
+
+      // If simulated fallback
+      setTimeout(() => {
+        setDevices((prev) =>
+          prev.map((d) =>
+            d.id === deviceId ? { ...d, isConnected: true, isConnecting: false } : d
+          )
+        );
+        setStatusMessage('Connected to device!');
+        isConnectingRef.current.delete(deviceId);
+      }, 500);
+      return;
     }
 
-    // Native implementation
+    // Native implementation (iOS / Android)
     const manager = managerRef.current;
     if (!manager) return;
 
@@ -454,14 +540,22 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
 
   // Disconnect from a device
   const disconnectDevice = async (deviceId: string) => {
-    // Web Bluetooth disconnection handler
+    // Web handling
     if (Platform.OS === 'web') {
-      const webDev = webDevicesMap.current.get(deviceId);
-      if (webDev && webDev.gatt) {
+      const hidDev = webHIDMap.current.get(deviceId);
+      if (hidDev && hidDev.opened) {
         try {
-          webDev.gatt.disconnect();
+          await hidDev.close();
         } catch (_) {}
       }
+
+      const bleDev = webBLEMap.current.get(deviceId);
+      if (bleDev && bleDev.gatt && bleDev.gatt.connected) {
+        try {
+          bleDev.gatt.disconnect();
+        } catch (_) {}
+      }
+
       setDevices((prev) =>
         prev.map((d) =>
           d.id === deviceId ? { ...d, isConnected: false, isConnecting: false } : d
@@ -471,6 +565,7 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
       return;
     }
 
+    // Native implementation
     const manager = managerRef.current;
     if (!manager) return;
 
@@ -539,7 +634,10 @@ export const BluetoothProvider: React.FC<{ children: ReactNode }> = ({ children 
         rescan,
         connectToDevice,
         disconnectDevice,
+        pairWebBLE,
+        pairWebHID,
         isWebSupported,
+        isWebHIDSupported,
       }}
     >
       {children}
