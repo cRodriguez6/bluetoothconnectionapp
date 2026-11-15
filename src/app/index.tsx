@@ -27,8 +27,6 @@ export default function HomeScreen() {
     isScanning,
     startScan,
     rescan,
-    pairWebBLE,
-    pairWebHID,
     statusMessage,
     isWebSupported,
   } = useBluetoothContext();
@@ -123,27 +121,16 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Web: Pair Device Action Buttons */}
+          {/* Web: Single Unified Scan & Pair Button */}
           {Platform.OS === 'web' && (
-            <View style={styles.webButtonsRow}>
-              <TouchableOpacity
-                style={styles.webMouseBtn}
-                onPress={pairWebHID}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="hardware-chip" size={16} color="#FFFFFF" />
-                <Text style={styles.webBtnText}>Pair Mouse (Logitech)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.webBleBtn}
-                onPress={pairWebBLE}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="headset" size={16} color="#FFFFFF" />
-                <Text style={styles.webBtnText}>Pair Bluetooth (Soundcore)</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={styles.webScanBtn}
+              onPress={startScan}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="bluetooth" size={18} color="#FFFFFF" />
+              <Text style={styles.webScanBtnText}>+ Scan for Bluetooth Devices</Text>
+            </TouchableOpacity>
           )}
 
           {/* Action Controls: List Devices & Rescan */}
@@ -370,38 +357,15 @@ const styles = StyleSheet.create({
   clearBtn: {
     padding: 2,
   },
-  webButtonsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-  },
-  webMouseBtn: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 11,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#000000',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-    cursor: 'pointer',
-  } as any,
-  webBleBtn: {
-    flex: 1,
+  webScanBtn: {
     backgroundColor: '#0284C7',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 11,
+    gap: 8,
+    paddingVertical: 12,
     borderRadius: 12,
+    marginTop: 10,
     borderWidth: 2,
     borderColor: '#000000',
     shadowColor: '#000000',
@@ -411,9 +375,9 @@ const styles = StyleSheet.create({
     elevation: 2,
     cursor: 'pointer',
   } as any,
-  webBtnText: {
+  webScanBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
   },
   controlsBar: {
